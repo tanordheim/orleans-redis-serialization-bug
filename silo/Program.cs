@@ -14,6 +14,7 @@ await redisContainer.StartAsync();
 await dynamoDbContainer.StartAsync();
 
 var useRedis = !args.Contains("--dynamodb");
+var useJson = args.Contains("--json");
 
 var builder = Host.CreateDefaultBuilder(args)
     .UseOrleans(siloBuilder =>
@@ -25,7 +26,14 @@ var builder = Host.CreateDefaultBuilder(args)
             {
                 builder.Configure<IServiceProvider>((options, services) =>
                 {
-                    options.GrainStorageSerializer = new OrleansGrainStorageSerializer(services.GetRequiredService<Serializer>());
+                    if (useJson)
+                    {
+                        options.GrainStorageSerializer = new JsonGrainStorageSerializer(services.GetRequiredService<OrleansJsonSerializer>());
+                    }
+                    else
+                    {
+                        options.GrainStorageSerializer = new OrleansGrainStorageSerializer(services.GetRequiredService<Serializer>());
+                    }
                     options.ConfigurationOptions = ConfigurationOptions.Parse(redisContainer.GetConnectionString() + ",abortConnect=false");
                 });
             });
@@ -36,7 +44,14 @@ var builder = Host.CreateDefaultBuilder(args)
             {
                 builder.Configure<IServiceProvider>((options, services) =>
                 {
-                    options.GrainStorageSerializer = new OrleansGrainStorageSerializer(services.GetRequiredService<Serializer>());
+                    if (useJson)
+                    {
+                        options.GrainStorageSerializer = new JsonGrainStorageSerializer(services.GetRequiredService<OrleansJsonSerializer>());
+                    }
+                    else
+                    {
+                        options.GrainStorageSerializer = new OrleansGrainStorageSerializer(services.GetRequiredService<Serializer>());
+                    }
                     options.TableName = $"orleans-redis-serialization-bug-{Guid.NewGuid()}";
                     options.Service = dynamoDbContainer.GetConnectionString();
                 });
@@ -47,18 +62,20 @@ var builder = Host.CreateDefaultBuilder(args)
 var host = builder.Build();
 await host.StartAsync();
 
+Console.WriteLine($"Running test with {(useRedis ? "Redis" : "DynamoDB")} storage and {(useJson ? "JSON" : "Orleans")} serialization");
+
 var clusterClient = host.Services.GetRequiredService<IClusterClient>();
 var statefulGrain = clusterClient.GetGrain<IStatefulGrain>(Guid.NewGuid());
 
 await statefulGrain.SetState(new StatefulState { Value = "test value", SomeType = new SomeType{Value = Guid.NewGuid()}});
 
 var currentState = await statefulGrain.GetState();
-Console.WriteLine($"Grain state before reactivating grain: {currentState.Value}");
+Console.WriteLine($"Grain state before reactivating grain: {currentState.Value}/{currentState.SomeType.Value}");
 
 await statefulGrain.ShutdownGrain();
 
 currentState = await statefulGrain.GetState();
-Console.WriteLine($"Grain state after reactivating grain: {currentState.Value}");
+Console.WriteLine($"Grain state after reactivating grain: {currentState.Value}/{currentState.SomeType.Value}");
 
 await host.StopAsync();
 await redisContainer.StopAsync();
